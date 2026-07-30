@@ -1,0 +1,22 @@
+[project]
+name = "mojo-cairosvg"
+version = "0.1.0"
+description = "A native Mojo rasterizer for a useful subset of CairoSVG"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Lee Penkman", email = "leepenkman@gmail.com" }]
+dependencies = ["numpy", "pillow"]
+
+[project.optional-dependencies]
+dev = ["pytest", "cairosvg"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+
+[tool.setuptools.packages.find]
+where = ["python"]
