@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from typing import NoReturn
 
 import numpy as np
@@ -17,6 +18,9 @@ F = ctypes.c_double
 
 _lib: ctypes.CDLL | None = None
 _EMPTY_STOPS = np.zeros((1, 5), dtype=np.float64)
+_PARALLEL_PIXEL_THRESHOLD = 65_536
+_PARALLEL_TASKS = min(16, os.cpu_count() or 1)
+_executor: ThreadPoolExecutor | None = None
 
 
 def _load() -> ctypes.CDLL:
@@ -45,6 +49,13 @@ def _load() -> ctypes.CDLL:
         library.mcs_premultiply.restype = None
         _lib = library
     return _lib
+
+
+def _pool() -> ThreadPoolExecutor:
+    global _executor
+    if _executor is None:
+        _executor = ThreadPoolExecutor(max_workers=_PARALLEL_TASKS)
+    return _executor
 
 
 def _addr(array: np.ndarray) -> int:
@@ -161,13 +172,45 @@ def draw_path(
     stop_count = len(stops)
     if stop_count == 0:
         stops = _EMPTY_STOPS
+    library = _load()
     x0, y0, x1, y1 = bounds
-    _load().mcs_draw_path(
+    arguments = (
         _addr(canvas), canvas.shape[1], canvas.shape[0], _addr(edges), edge_count,
-        edges.shape[1],
-        x0, y0, x1, y1, int(stroke), fill_rule, stroke_width, int(round_caps),
+        edges.shape[1], x0, int(stroke), fill_rule, stroke_width, int(round_caps),
         paint_kind, _addr(paint), _addr(stops), stop_count, opacity, samples,
     )
+    top = max(0, y0)
+    bottom = min(canvas.shape[0], y1)
+    clipped_width = max(0, min(canvas.shape[1], x1) - max(0, x0))
+    row_count = max(0, bottom - top)
+
+    def draw_rows(row_start: int, row_end: int) -> None:
+        (
+            canvas_addr, width, height, edges_addr, count, stride, left,
+            draw_mode, rule, line_width, caps, kind, paint_addr, stops_addr,
+            stops_count, alpha, sample_count,
+        ) = arguments
+        library.mcs_draw_path(
+            canvas_addr, width, height, edges_addr, count, stride, left,
+            row_start, x1, row_end, draw_mode, rule, line_width, caps, kind,
+            paint_addr, stops_addr, stops_count, alpha, sample_count,
+        )
+
+    if (
+        clipped_width * row_count >= _PARALLEL_PIXEL_THRESHOLD
+        and row_count > 1
+        and _PARALLEL_TASKS > 1
+    ):
+        task_count = min(_PARALLEL_TASKS, row_count)
+        rows_per_task = (row_count + task_count - 1) // task_count
+        futures = [
+            _pool().submit(draw_rows, start, min(start + rows_per_task, bottom))
+            for start in range(top, bottom, rows_per_task)
+        ]
+        for future in futures:
+            future.result()
+    else:
+        draw_rows(y0, y1)
 
 
 def draw_rects(canvas: np.ndarray, rects: np.ndarray, samples: int = 4) -> None:

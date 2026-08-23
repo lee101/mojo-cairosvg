@@ -9,6 +9,7 @@ from PIL import Image
 import pytest
 
 import mojocairosvg
+import mojocairosvg._lib as native_lib
 from mojocairosvg._lib import draw_path, draw_rects, flatten
 
 
@@ -132,6 +133,29 @@ def test_linear_gradient_matches_upstream():
       <rect x="10" y="10" width="120" height="60" fill="url(#g)"/>
     </svg>"""
     assert_pixel_parity(svg, mean_error=0.8)
+
+
+def test_linear_gradient_simd_tail_matches_upstream():
+    svg = b"""<svg width="131" height="67">
+      <defs><linearGradient id="g" x2="1" y2="1">
+        <stop offset="0" stop-color="#f20"/>
+        <stop offset=".45" stop-color="#2d6"/>
+        <stop offset="1" stop-color="#15e"/>
+      </linearGradient></defs>
+      <rect width="131" height="67" fill="url(#g)"/>
+    </svg>"""
+    assert_pixel_parity(svg, mean_error=0.8)
+
+
+def test_parallel_rows_are_byte_identical_to_serial(monkeypatch):
+    svg = b"""<svg width="137" height="103"><path
+      d="M3 82 C18 4 119 7 134 84 Q71 102 3 82Z"
+      fill="#e87219" stroke="#253763" stroke-width="5"/></svg>"""
+    monkeypatch.setattr(native_lib, "_PARALLEL_PIXEL_THRESHOLD", 1 << 60)
+    serial = mojocairosvg.svg2rgba(bytestring=svg)
+    monkeypatch.setattr(native_lib, "_PARALLEL_PIXEL_THRESHOLD", 1)
+    parallel = mojocairosvg.svg2rgba(bytestring=svg)
+    assert np.array_equal(parallel, serial)
 
 
 def test_radial_gradient_matches_upstream_on_square():

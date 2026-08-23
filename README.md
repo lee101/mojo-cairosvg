@@ -105,15 +105,21 @@ by Mojo time.
 
 | case | Mojo | reference | speedup | result |
 |---|---:|---:|---:|---|
-| svg2png: solid fill, 768x768 | 24.63 ms | 39.47 ms | 1.60x | faster |
-| svg2png: linear gradient, 768x768 | 70.49 ms | 59.43 ms | 0.84x | slower |
-| svg2png: curved fill + stroke, 384x384 | 44.09 ms | 18.59 ms | 0.42x | slower |
-| svg2png: 500 small rectangles, 512x512 | 28.91 ms | 74.65 ms | 2.58x | faster |
-| premultiply RGBA, 2048x2048 | 35.06 ms | 229.26 ms (NumPy) | 6.54x | faster |
+| svg2png: solid fill, 768x768 | 12.04 ms | 25.47 ms | 2.12x | faster |
+| svg2png: linear gradient, 768x768 | 31.09 ms | 42.32 ms | 1.36x | faster |
+| svg2png: curved fill + stroke, 384x384 | 22.69 ms | 11.33 ms | 0.50x | slower |
+| svg2png: 500 small rectangles, 512x512 | 24.59 ms | 61.26 ms | 2.49x | faster |
+| premultiply RGBA, 2048x2048 | 22.96 ms | 268.55 ms (NumPy) | 11.70x | faster |
 
-In this run, solid fill, the rectangle batch, and the premultiplication kernel
-were faster. The gradient and curved-path cases were slower. No GPU path is
-included.
+In this run, solid fill, the gradient, the rectangle batch, and the
+premultiplication kernel were faster. The curved-path case remained slower.
+Large path bounds are split into independent native row ranges above a
+65,536-pixel threshold; smaller draws stay serial. Opaque linear-gradient spans
+use float64 SIMD with scalar boundary and remainder handling.
+
+No GPU path is included. Gradient painting has low arithmetic intensity, while
+path coverage is branch-heavy and repeatedly scans a small edge buffer; neither
+kernel is a good fit for GPU transfer and launch overhead.
 
 ## How it works
 
@@ -132,6 +138,7 @@ The Python boundary uses `ctypes`. NumPy buffers cross the C ABI as 64-bit
 integer addresses; exported Mojo functions reconstruct
 `UnsafePointer[..., AnyOrigin[mut=True]]` values internally. Nothing owns memory
 on both sides: Python allocates every command, edge and pixel buffer, and Mojo
-only reads or mutates those buffers during the call. `src/capi.mojo` is one
-compilation unit and `build/build.sh` emits
+only reads or mutates those buffers during the call. Large draws use a bounded
+Python worker pool; each ctypes call releases the GIL and owns disjoint canvas
+rows. `src/capi.mojo` is one compilation unit and `build/build.sh` emits
 `dist/libmojo-cairosvg.so`.

@@ -1,6 +1,6 @@
 """C ABI for path flattening and antialiased SVG rasterization."""
 
-from std.math import ceil, floor, sqrt
+from std.math import ceil, floor, iota, sqrt
 from std.sys.info import simd_width_of as simdwidthof
 
 comptime FPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
@@ -335,6 +335,80 @@ def paint_pixel(
     canvas[index + 3] = byte_value(result_alpha)
 
 
+def paint_linear_opaque_span(
+    canvas: BPtr,
+    width: Int,
+    left: Int,
+    right: Int,
+    y: Int,
+    paint: FPtr,
+    stops: FPtr,
+    stop_count: Int,
+):
+    comptime W = simdwidthof[DType.float64]()
+    var x = left
+    while x + W <= right:
+        var px = iota[DType.float64, W](Float64(x) + 0.5)
+        var t = max(
+            SIMD[DType.float64, W](0.0),
+            min(
+                SIMD[DType.float64, W](1.0),
+                paint[4] * px + paint[5] * (Float64(y) + 0.5) + paint[6],
+            ),
+        )
+        var last = (stop_count - 1) * 5
+        var red = SIMD[DType.float64, W](stops[last + 1])
+        var green = SIMD[DType.float64, W](stops[last + 2])
+        var blue = SIMD[DType.float64, W](stops[last + 3])
+        var first = t.le(stops[0])
+        red = first.select(SIMD[DType.float64, W](stops[1]), red)
+        green = first.select(SIMD[DType.float64, W](stops[2]), green)
+        blue = first.select(SIMD[DType.float64, W](stops[3]), blue)
+        for upper in range(1, stop_count):
+            var lo = (upper - 1) * 5
+            var hi = upper * 5
+            var span = stops[hi] - stops[lo]
+            var fraction = (t - stops[lo]) / span
+            var inside = t.gt(stops[lo]) & t.le(stops[hi])
+            red = inside.select(
+                stops[lo + 1] * (1.0 - fraction) + stops[hi + 1] * fraction,
+                red,
+            )
+            green = inside.select(
+                stops[lo + 2] * (1.0 - fraction) + stops[hi + 2] * fraction,
+                green,
+            )
+            blue = inside.select(
+                stops[lo + 3] * (1.0 - fraction) + stops[hi + 3] * fraction,
+                blue,
+            )
+        var red_bytes = max(
+            SIMD[DType.float64, W](0.0),
+            min(SIMD[DType.float64, W](255.0), floor(red * 255.0 + 0.5)),
+        ).cast[DType.uint8]()
+        var green_bytes = max(
+            SIMD[DType.float64, W](0.0),
+            min(SIMD[DType.float64, W](255.0), floor(green * 255.0 + 0.5)),
+        ).cast[DType.uint8]()
+        var blue_bytes = max(
+            SIMD[DType.float64, W](0.0),
+            min(SIMD[DType.float64, W](255.0), floor(blue * 255.0 + 0.5)),
+        ).cast[DType.uint8]()
+        var index = (y * width + x) * 4
+        (canvas + index).strided_store[width=W](red_bytes, 4)
+        (canvas + index + 1).strided_store[width=W](green_bytes, 4)
+        (canvas + index + 2).strided_store[width=W](blue_bytes, 4)
+        (canvas + index + 3).strided_store[width=W](
+            SIMD[DType.uint8, W](255), 4
+        )
+        x += W
+    while x < right:
+        paint_pixel(
+            canvas, width, x, y, 1.0, 1, paint, stops, stop_count, 1.0
+        )
+        x += 1
+
+
 def draw_rect_row(
     canvas: BPtr,
     width: Int,
@@ -360,18 +434,39 @@ def draw_rect_row(
             y_hits += 1
     if y_hits == 0:
         return
-    for x in range(left, right):
+    var opaque_linear = paint_kind == 1 and opacity == 1.0 and stop_count > 0
+    if opaque_linear:
+        for i in range(stop_count):
+            if stops[i * 5 + 4] != 1.0 or (
+                i > 0 and stops[i * 5] <= stops[(i - 1) * 5]
+            ):
+                opaque_linear = False
+    var full_left = max(left, Int(ceil(rect_left)))
+    var full_right = min(right, Int(floor(rect_right)))
+    var x = left
+    while x < right:
+        if (
+            opaque_linear and y_hits == sample_count and x == full_left
+            and full_left < full_right
+        ):
+            paint_linear_opaque_span(
+                canvas, width, full_left, full_right, y, paint, stops, stop_count
+            )
+            x = full_right
+            continue
         var x_hits = 0
         for sx in range(sample_count):
             var px = Float64(x) + (Float64(sx) + 0.5) / Float64(sample_count)
             if px >= rect_left and px < rect_right:
                 x_hits += 1
         if x_hits == 0:
+            x += 1
             continue
         paint_pixel(
             canvas, width, x, y, Float64(x_hits * y_hits) * inv_samples,
             paint_kind, paint, stops, stop_count, opacity,
         )
+        x += 1
 
 
 def draw_row(
