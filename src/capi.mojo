@@ -1,7 +1,5 @@
 """C ABI for path flattening and antialiased SVG rasterization."""
 
-from std.algorithm import parallelize
-from std.gpu.host import DeviceContext
 from std.math import ceil, floor, sqrt
 from std.sys.info import simd_width_of as simdwidthof
 
@@ -475,8 +473,6 @@ def mcs_draw_path(
     var top = max(0, y_min)
     var right = min(width, x_max)
     var bottom = min(height, y_max)
-    var rows = bottom - top
-    var pixel_count = rows * (right - left)
     var axis_rect = draw_mode == 0 and edge_count == 4
     var rect_left = 1.7976931348623157e308
     var rect_top = 1.7976931348623157e308
@@ -495,62 +491,20 @@ def mcs_draw_path(
             rect_right = max(rect_right, max(x0, x1))
             rect_bottom = max(rect_bottom, max(y0, y1))
     if axis_rect:
-        if pixel_count >= 65536 and rows >= 8:
-            @parameter
-            def rect_work(row: Int):
-                draw_rect_row(
-                    canvas, width, left, right, top + row, rect_left, rect_top,
-                    rect_right, rect_bottom, paint_kind, paint, stops, stop_count,
-                    opacity, sample_count, inv_samples,
-                )
-
-            try:
-                var cpu_ctx = DeviceContext(api="cpu")
-                parallelize[rect_work](rows, ctx=cpu_ctx)
-            except:
-                for y in range(top, bottom):
-                    draw_rect_row(
-                        canvas, width, left, right, y, rect_left, rect_top,
-                        rect_right, rect_bottom, paint_kind, paint, stops,
-                        stop_count, opacity, sample_count, inv_samples,
-                    )
-        else:
-            for y in range(top, bottom):
-                draw_rect_row(
-                    canvas, width, left, right, y, rect_left, rect_top,
-                    rect_right, rect_bottom, paint_kind, paint, stops, stop_count,
-                    opacity, sample_count, inv_samples,
-                )
-        return
-    if pixel_count >= 65536 and rows >= 8:
-        @parameter
-        def work(row: Int):
-            draw_row(
-                canvas, width, edges, edge_count, edge_stride, left, right, top + row,
-                draw_mode, fill_rule, half_width, half_width2, round_caps,
-                paint_kind, paint, stops, stop_count, opacity, sample_count,
-                inv_samples,
-            )
-
-        try:
-            var cpu_ctx = DeviceContext(api="cpu")
-            parallelize[work](rows, ctx=cpu_ctx)
-        except:
-            for y in range(top, bottom):
-                draw_row(
-                    canvas, width, edges, edge_count, edge_stride, left, right, y,
-                    draw_mode, fill_rule, half_width, half_width2, round_caps,
-                    paint_kind, paint, stops, stop_count, opacity, sample_count,
-                    inv_samples,
-                )
-    else:
         for y in range(top, bottom):
-            draw_row(
-                canvas, width, edges, edge_count, edge_stride, left, right, y,
-                draw_mode, fill_rule, half_width, half_width2, round_caps,
-                paint_kind, paint, stops, stop_count, opacity, sample_count,
-                inv_samples,
+            draw_rect_row(
+                canvas, width, left, right, y, rect_left, rect_top,
+                rect_right, rect_bottom, paint_kind, paint, stops, stop_count,
+                opacity, sample_count, inv_samples,
             )
+        return
+    for y in range(top, bottom):
+        draw_row(
+            canvas, width, edges, edge_count, edge_stride, left, right, y,
+            draw_mode, fill_rule, half_width, half_width2, round_caps,
+            paint_kind, paint, stops, stop_count, opacity, sample_count,
+            inv_samples,
+        )
 
 
 @export("mcs_draw_rects")
