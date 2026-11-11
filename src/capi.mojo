@@ -141,14 +141,14 @@ def fill_contains(
     var i = 0
     var vector_winding = SIMD[DType.int64, W](0)
     while edge_count >= W * 2 and i + W <= edge_count:
-        var x0 = edges.load[width=W](i)
-        var y0 = edges.load[width=W](edge_stride + i)
-        var y1 = edges.load[width=W](edge_stride * 3 + i)
+        var x0 = edges.unsafe_load[width=W](i)
+        var y0 = edges.unsafe_load[width=W](edge_stride + i)
+        var y1 = edges.unsafe_load[width=W](edge_stride * 3 + i)
         var crosses = (y0.le(py) & y1.gt(py)) | (y1.le(py) & y0.gt(py))
         if not any(crosses):
             i += W
             continue
-        var slope = edges.load[width=W](edge_stride * 7 + i)
+        var slope = edges.unsafe_load[width=W](edge_stride * 7 + i)
         var cross_x = x0 + (py - y0) * slope
         var right = crosses & cross_x.gt(px)
         if rule == 1:
@@ -190,10 +190,10 @@ def edge_distance2(
     var best = 1.7976931348623157e308
     var i = 0
     while edge_count >= W * 2 and i + W <= edge_count:
-        var x0 = edges.load[width=W](i)
-        var y0 = edges.load[width=W](edge_stride + i)
-        var x1 = edges.load[width=W](edge_stride * 2 + i)
-        var y1 = edges.load[width=W](edge_stride * 3 + i)
+        var x0 = edges.unsafe_load[width=W](i)
+        var y0 = edges.unsafe_load[width=W](edge_stride + i)
+        var x1 = edges.unsafe_load[width=W](edge_stride * 2 + i)
+        var y1 = edges.unsafe_load[width=W](edge_stride * 3 + i)
         var valid = (
             max(x0, x1).ge(px - max_distance)
             & min(x0, x1).le(px + max_distance)
@@ -203,9 +203,9 @@ def edge_distance2(
         if not any(valid):
             i += W
             continue
-        var dx = edges.load[width=W](edge_stride * 4 + i)
-        var dy = edges.load[width=W](edge_stride * 5 + i)
-        var inv_denom = edges.load[width=W](edge_stride * 6 + i)
+        var dx = edges.unsafe_load[width=W](edge_stride * 4 + i)
+        var dy = edges.unsafe_load[width=W](edge_stride * 5 + i)
+        var inv_denom = edges.unsafe_load[width=W](edge_stride * 6 + i)
         valid &= inv_denom.ne(0.0)
         var t = ((px - x0) * dx + (py - y0) * dy) * inv_denom
         if round_caps:
